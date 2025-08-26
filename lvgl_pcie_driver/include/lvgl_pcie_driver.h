@@ -29,17 +29,19 @@
 #define MAX_DEVICES 4
 #define DEVICE_NAME "lvgl_pcie"
 
-/* Display configuration */
-#define DEFAULT_SCREEN_WIDTH 1920
-#define DEFAULT_SCREEN_HEIGHT 1080
+/* Display configuration - 4K Video */
+#define DEFAULT_SCREEN_WIDTH 3840  /* 4K width */
+#define DEFAULT_SCREEN_HEIGHT 2160 /* 4K height */
 #define DEFAULT_COLOR_DEPTH 32
 #define BYTES_PER_PIXEL (DEFAULT_COLOR_DEPTH / 8)
-#define BUFFER_SIZE (DEFAULT_SCREEN_WIDTH * DEFAULT_SCREEN_HEIGHT * BYTES_PER_PIXEL)
+#define FRAME_SIZE_4K (DEFAULT_SCREEN_WIDTH * DEFAULT_SCREEN_HEIGHT * BYTES_PER_PIXEL) /* ~31.2MB per frame */
+#define BUFFER_SIZE FRAME_SIZE_4K
 
 /* DMA configuration */
 #define DMA_BUFFER_COUNT 2
-#define DMA_TIMEOUT_MS 1000
-#define MAX_DMA_SIZE (16 * 1024 * 1024)  /* 16MB max transfer */
+#define DMA_TIMEOUT_MS 5000               /* Increased timeout for large transfers */
+#define MAX_DMA_SIZE (64 * 1024 * 1024)   /* 64MB max transfer for 4K frames */
+#define DMA_CHUNK_SIZE (4 * 1024 * 1024)  /* 4MB chunks for better performance */
 
 /* Register offsets (FPGA specific - adjust as needed) */
 #define REG_CONTROL       0x00
@@ -155,6 +157,17 @@ int lvgl_pcie_dma_init(struct lvgl_pcie_device *priv);
 void lvgl_pcie_dma_cleanup(struct lvgl_pcie_device *priv);
 int lvgl_pcie_dma_transfer(struct lvgl_pcie_device *priv, int buffer_idx);
 int lvgl_pcie_dma_wait_complete(struct lvgl_pcie_device *priv, int timeout_ms);
+
+/* Chunked DMA functions for large 4K frames */
+int lvgl_pcie_dma_transfer_chunked(struct lvgl_pcie_device *priv, int buffer_idx);
+int lvgl_pcie_dma_transfer_next_chunk(struct lvgl_pcie_device *priv);
+void lvgl_pcie_dma_chunk_complete(struct lvgl_pcie_device *priv, bool error);
+int lvgl_pcie_dma_complete_chunked_transfer(struct lvgl_pcie_device *priv, bool error);
+int lvgl_pcie_dma_wait_chunked_complete(struct lvgl_pcie_device *priv, int timeout_ms);
+int lvgl_pcie_dma_abort_chunked(struct lvgl_pcie_device *priv);
+void lvgl_pcie_dma_get_chunked_progress(struct lvgl_pcie_device *priv,
+                                       size_t *bytes_done, size_t *bytes_total,
+                                       int *chunks_done, int *chunks_total);
 
 /* Buffer management */
 int lvgl_pcie_buffer_init(struct lvgl_pcie_device *priv);

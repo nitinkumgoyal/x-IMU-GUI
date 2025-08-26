@@ -218,9 +218,11 @@ static int lvgl_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     priv->enabled = true;
 
     dev_info(&pdev->dev, "LVGL PCIe device initialized successfully (device %d)\n", device_index);
-    dev_info(&pdev->dev, "Display: %dx%d, %d bpp, Buffer size: %zu bytes\n",
+    dev_info(&pdev->dev, "4K Display: %dx%d, %d bpp, Frame size: %.1f MB\n",
              priv->screen_width, priv->screen_height, priv->color_depth,
-             BUFFER_SIZE);
+             (float)BUFFER_SIZE / (1024 * 1024));
+    dev_info(&pdev->dev, "Total buffer memory: %.1f MB for %d buffers\n",
+             (float)(BUFFER_SIZE * DMA_BUFFER_COUNT) / (1024 * 1024), DMA_BUFFER_COUNT);
 
     return 0;
 

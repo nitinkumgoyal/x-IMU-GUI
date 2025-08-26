@@ -102,13 +102,13 @@ int lvgl_pcie_buffer_swap(struct lvgl_pcie_device *priv)
     lvgl_pcie_dma_sync_for_device(priv, priv->current_buffer, 0, 
                                  priv->buffers[priv->current_buffer].size);
 
-    /* Initiate DMA transfer of the new current buffer */
-    ret = lvgl_pcie_dma_transfer(priv, priv->current_buffer);
+    /* Initiate DMA transfer of the new current buffer using chunked transfer for 4K */
+    ret = lvgl_pcie_dma_transfer_chunked(priv, priv->current_buffer);
     if (ret) {
         /* Revert swap on error */
         priv->current_buffer = old_current;
         priv->pending_buffer = old_pending;
-        lvgl_pcie_err(priv, "Failed to start DMA transfer after swap: %d\n", ret);
+        lvgl_pcie_err(priv, "Failed to start chunked DMA transfer after swap: %d\n", ret);
         goto unlock;
     }
 

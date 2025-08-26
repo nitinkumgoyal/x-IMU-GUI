@@ -20,9 +20,11 @@ int lvgl_pcie_dma_init(struct lvgl_pcie_device *priv)
     int i;
     size_t buffer_size = BUFFER_SIZE;
     
-    lvgl_pcie_info(priv, "Initializing DMA subsystem\n");
-    lvgl_pcie_info(priv, "Buffer size: %zu bytes, Count: %d\n", 
-                   buffer_size, DMA_BUFFER_COUNT);
+    lvgl_pcie_info(priv, "Initializing DMA subsystem for 4K video\n");
+    lvgl_pcie_info(priv, "Frame size: %zu bytes (%.1f MB), Buffer count: %d\n", 
+                   buffer_size, (float)buffer_size / (1024 * 1024), DMA_BUFFER_COUNT);
+    lvgl_pcie_info(priv, "Total buffer memory: %.1f MB\n", 
+                   (float)(buffer_size * DMA_BUFFER_COUNT) / (1024 * 1024));
 
     /* Allocate DMA buffers */
     for (i = 0; i < DMA_BUFFER_COUNT; i++) {
