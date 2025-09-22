@@ -1,0 +1,257 @@
+# GitLab CI/CD Pipeline for STM32 Projects
+# This pipeline builds STM32 firmware in a Docker container
+
+variables:
+  # Docker image with STM32 build tools
+  STM32_BUILD_IMAGE: "stm32-builder:latest"
+  
+  # Build configuration
+  BUILD_TYPE: "Release"
+  TARGET_MCU: "STM32F4xx"  # Change this to match your MCU family
+  
+  # Artifacts configuration
+  ARTIFACTS_EXPIRE_IN: "1 week"
+
+stages:
+  - build-docker
+  - validate
+  - build
+  - test
+  - deploy
+
+# Build the Docker image (optional - you can use pre-built images)
+build-docker-image:
+  stage: build-docker
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_DRIVER: overlay2
+  script:
+    - docker build -t $STM32_BUILD_IMAGE .
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - changes:
+      - Dockerfile
+  tags:
+    - docker
+
+# Alternative: Use pre-built Docker image
+.stm32_build_template: &stm32_build_template
+  # Use one of these pre-built images or your custom one:
+  # image: jasonyangee/stm32-builder:ubuntu-latest
+  # image: chille/stm32-docker:latest
+  image: $STM32_BUILD_IMAGE
+  before_script:
+    - arm-none-eabi-gcc --version
+    - cmake --version || echo "CMake not available, using Make"
+    - make --version
+
+# Validate project structure and configuration
+validate-project:
+  <<: *stm32_build_template
+  stage: validate
+  script:
+    - echo "Validating STM32 project structure..."
+    - |
+      if [ -f "CMakeLists.txt" ]; then
+        echo "✓ CMake project detected"
+        cmake --version
+      elif [ -f "Makefile" ]; then
+        echo "✓ Makefile project detected"
+      elif [ -f "*.ioc" ]; then
+        echo "✓ STM32CubeIDE project detected"
+        echo "Note: You may need to generate Makefile from .ioc file"
+      else
+        echo "❌ No build system detected. Please ensure you have:"
+        echo "  - CMakeLists.txt (recommended)"
+        echo "  - Makefile"
+        echo "  - Or .ioc file with generated build files"
+        exit 1
+      fi
+    - echo "Checking for source files..."
+    - find . -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hpp" | head -10
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# Build firmware using CMake (recommended approach)
+build-cmake:
+  <<: *stm32_build_template
+  stage: build
+  script:
+    - echo "Building STM32 project with CMake..."
+    - mkdir -p build
+    - cd build
+    - cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_TOOLCHAIN_FILE=../cmake/arm-none-eabi-gcc.cmake ..
+    - cmake --build . --parallel $(nproc)
+    - echo "Build completed successfully!"
+    - ls -la *.elf *.bin *.hex 2>/dev/null || echo "No output files found"
+  artifacts:
+    paths:
+      - build/*.elf
+      - build/*.bin
+      - build/*.hex
+      - build/*.map
+    expire_in: $ARTIFACTS_EXPIRE_IN
+    reports:
+      junit: build/test-results.xml
+  rules:
+    - exists:
+      - CMakeLists.txt
+  cache:
+    key: cmake-cache-$CI_COMMIT_REF_SLUG
+    paths:
+      - build/
+
+# Build firmware using Make (fallback approach)
+build-make:
+  <<: *stm32_build_template
+  stage: build
+  script:
+    - echo "Building STM32 project with Make..."
+    - make clean
+    - make -j$(nproc) all
+    - echo "Build completed successfully!"
+    - ls -la *.elf *.bin *.hex 2>/dev/null || echo "No output files found"
+  artifacts:
+    paths:
+      - "*.elf"
+      - "*.bin"
+      - "*.hex"
+      - "*.map"
+    expire_in: $ARTIFACTS_EXPIRE_IN
+  rules:
+    - exists:
+      - Makefile
+  except:
+    - exists:
+      - CMakeLists.txt
+
+# Static analysis (optional)
+static-analysis:
+  <<: *stm32_build_template
+  stage: test
+  script:
+    - echo "Running static analysis..."
+    - |
+      if command -v cppcheck >/dev/null 2>&1; then
+        cppcheck --enable=all --inconclusive --xml --xml-version=2 \
+          --suppress=missingIncludeSystem \
+          --suppress=unusedFunction \
+          src/ 2> cppcheck-report.xml || true
+      else
+        echo "Cppcheck not available, skipping static analysis"
+      fi
+  artifacts:
+    paths:
+      - cppcheck-report.xml
+    expire_in: $ARTIFACTS_EXPIRE_IN
+    reports:
+      junit: cppcheck-report.xml
+  allow_failure: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# Unit tests (if available)
+unit-tests:
+  <<: *stm32_build_template
+  stage: test
+  script:
+    - echo "Running unit tests..."
+    - |
+      if [ -d "tests" ] && [ -f "tests/CMakeLists.txt" ]; then
+        cd tests
+        mkdir -p build
+        cd build
+        cmake -DCMAKE_BUILD_TYPE=Debug ..
+        cmake --build .
+        ctest --output-on-failure
+      else
+        echo "No unit tests found, skipping..."
+      fi
+  artifacts:
+    paths:
+      - tests/build/test-results.xml
+    expire_in: $ARTIFACTS_EXPIRE_IN
+    reports:
+      junit: tests/build/test-results.xml
+  allow_failure: true
+  rules:
+    - exists:
+      - tests/CMakeLists.txt
+
+# Size analysis
+size-analysis:
+  <<: *stm32_build_template
+  stage: test
+  script:
+    - echo "Analyzing firmware size..."
+    - |
+      ELF_FILE=$(find . -name "*.elf" | head -1)
+      if [ -n "$ELF_FILE" ]; then
+        echo "Analyzing $ELF_FILE"
+        arm-none-eabi-size "$ELF_FILE"
+        arm-none-eabi-objdump -h "$ELF_FILE"
+        
+        # Generate size report
+        echo "=== Memory Usage Report ===" > size-report.txt
+        arm-none-eabi-size "$ELF_FILE" >> size-report.txt
+        echo "" >> size-report.txt
+        echo "=== Section Details ===" >> size-report.txt
+        arm-none-eabi-objdump -h "$ELF_FILE" >> size-report.txt
+      else
+        echo "No ELF file found for size analysis"
+        exit 1
+      fi
+  artifacts:
+    paths:
+      - size-report.txt
+    expire_in: $ARTIFACTS_EXPIRE_IN
+  dependencies:
+    - build-cmake
+    - build-make
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# Deploy to development environment (optional)
+deploy-dev:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - echo "Deploying firmware to development environment..."
+    - echo "Firmware files:"
+    - find . -name "*.bin" -o -name "*.hex" -o -name "*.elf"
+    # Add your deployment logic here
+    # For example, upload to a file server, trigger a deployment webhook, etc.
+  dependencies:
+    - build-cmake
+    - build-make
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+  when: manual
+
+# Deploy to production (manual trigger only)
+deploy-prod:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - echo "Deploying firmware to production environment..."
+    - echo "Firmware files:"
+    - find . -name "*.bin" -o -name "*.hex" -o -name "*.elf"
+    # Add your production deployment logic here
+  dependencies:
+    - build-cmake
+    - build-make
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  when: manual
+  environment:
+    name: production
