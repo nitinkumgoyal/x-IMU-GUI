@@ -1,0 +1,33 @@
+# Docker Compose for STM32 Development Environment
+# This provides an easy way to run the STM32 build environment locally
+
+version: '3.8'
+
+services:
+  stm32-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stm32-builder:latest
+    container_name: stm32-dev
+    volumes:
+      # Mount your project directory
+      - .:/workspace
+      # Mount Docker socket for Docker-in-Docker (if needed)
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /workspace
+    # Keep container running for interactive use
+    tty: true
+    stdin_open: true
+    # Optional: expose ports for debugging
+    ports:
+      - "3333:3333"  # OpenOCD GDB server
+      - "4444:4444"  # OpenOCD Telnet server
+    # Environment variables
+    environment:
+      - BUILD_TYPE=Release
+      - PARALLEL_JOBS=4
+    # Optional: add USB device access for hardware debugging
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb
+    # privileged: true
